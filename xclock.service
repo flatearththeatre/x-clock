@@ -1,0 +1,16 @@
+[Unit]
+Description=X Clock Service
+After=network.target
+After=time-sync.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=root
+ExecStartPre=/opt/virtualenv/xclock/bin/python /opt/XClock/font/convert.py
+ExecStart=/opt/virtualenv/xclock/bin/python /opt/XClock/x_clock.py
+
+[Install]
+WantedBy=multi-user.target
