@@ -132,6 +132,21 @@ HTML_TEMPLATE = """
         .log-command {
             color: #29B6F6;
         }
+        .preview-container {
+            text-align: center;
+            background: #0a0a0a;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .preview-container img {
+            border: 2px solid #29B6F6;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+        .preview-controls {
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -140,6 +155,21 @@ HTML_TEMPLATE = """
 
     <div class="osc-info">
         <strong>OSC Target:</strong> {{ osc_display }}
+        <span style="margin-left: 20px;">|</span>
+        <strong style="margin-left: 20px;">Preview:</strong> <span id="preview-status">Idle</span>
+    </div>
+
+    <div class="section">
+        <h2>Live Preview</h2>
+        <div style="margin-bottom: 10px;">
+            <button onclick="togglePreview()" id="togglePreviewBtn">Show Preview</button>
+            <span style="margin-left: 10px; font-size: 0.9em; color: #666;">
+                (Preview adds CPU load to the clock)
+            </span>
+        </div>
+        <div class="preview-container" id="previewContainer" style="display: none;">
+            <img id="clockPreview" alt="Clock display" onerror="handleStreamError()" onload="handleStreamLoad()">
+        </div>
     </div>
 
     <div class="section">
@@ -306,6 +336,48 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
+        let previewActive = false;
+        const streamUrl = '{{ stream_url }}';
+
+        function togglePreview() {
+            const btn = document.getElementById('togglePreviewBtn');
+            const container = document.getElementById('previewContainer');
+            const img = document.getElementById('clockPreview');
+            const status = document.getElementById('preview-status');
+
+            previewActive = !previewActive;
+
+            if (previewActive) {
+                // Start stream
+                img.src = streamUrl;
+                container.style.display = 'block';
+                btn.textContent = 'Hide Preview';
+                status.textContent = 'Connecting...';
+                status.style.color = '#29B6F6';
+            } else {
+                // Stop stream
+                img.src = '';
+                container.style.display = 'none';
+                btn.textContent = 'Show Preview';
+                status.textContent = 'Idle';
+                status.style.color = '#666';
+            }
+        }
+
+        function handleStreamError() {
+            if (!previewActive) return;
+            const status = document.getElementById('preview-status');
+            status.textContent = 'Disconnected';
+            status.style.color = '#f44336';
+        }
+
+        function handleStreamLoad() {
+            if (!previewActive) return;
+            const status = document.getElementById('preview-status');
+            status.textContent = 'Streaming';
+            status.style.color = '#4caf50';
+        }
+
         function updateColorText(textId, pickerId) {
             const picker = document.getElementById(pickerId);
             const text = document.getElementById(textId);
@@ -366,11 +438,15 @@ HTML_TEMPLATE = """
 
             entry.innerHTML = `<span class="log-time">[${time}]</span><span class="log-command">${qlabFormat}</span>`;
 
-            log.insertBefore(entry, log.firstChild);
+            // Add to bottom instead of top
+            log.appendChild(entry);
 
-            // Limit log to 100 entries
+            // Auto-scroll to bottom
+            log.scrollTop = log.scrollHeight;
+
+            // Limit log to 100 entries, remove from top
             while (log.children.length > 100) {
-                log.removeChild(log.lastChild);
+                log.removeChild(log.firstChild);
             }
         }
 
@@ -479,7 +555,11 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE, osc_display=osc_config['display'])
+    return render_template_string(
+        HTML_TEMPLATE,
+        osc_display=osc_config['display'],
+        stream_url=osc_config['stream_url']
+    )
 
 
 @app.route('/osc', methods=['POST'])
@@ -506,22 +586,27 @@ def main():
     parser.add_argument('--port', type=int, default=5000, help='Port to bind web server to (default: 5000)')
     parser.add_argument('--osc-host', default='127.0.0.1', help='OSC server host (default: 127.0.0.1)')
     parser.add_argument('--osc-port', type=int, default=1337, help='OSC server port (default: 1337)')
+    parser.add_argument('--http-port', type=int, default=8080, help='HTTP preview port on clock server (default: 8080)')
 
     args = parser.parse_args()
 
     global osc_client, osc_config
     osc_client = udp_client.SimpleUDPClient(args.osc_host, args.osc_port)
 
-    # Determine OSC display string
+    # Determine OSC display string and stream URL
     if args.osc_host in ('127.0.0.1', 'localhost'):
         local_ip = get_local_ip()
         osc_config['display'] = f"{local_ip}:{args.osc_port}"
+        # For localhost, use the actual IP so browser can connect
+        osc_config['stream_url'] = f"http://{local_ip}:{args.http_port}/stream"
     else:
         osc_config['display'] = f"{args.osc_host}:{args.osc_port}"
+        osc_config['stream_url'] = f"http://{args.osc_host}:{args.http_port}/stream"
 
     print(f"X Clock Web Controller")
     print(f"Web UI: http://{args.host}:{args.port}")
     print(f"OSC Target: {osc_config['display']}")
+    print(f"Stream URL: {osc_config['stream_url']}")
 
     app.run(host=args.host, port=args.port)
 

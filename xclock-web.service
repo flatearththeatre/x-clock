@@ -1,0 +1,15 @@
+[Unit]
+Description=X Clock Controller
+After=network.target
+After=time-sync.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=root
+ExecStart=/opt/virtualenv/xclock/bin/python /opt/XClock/web_controller.py --host 0.0.0.0 --port 80
+
+[Install]
+WantedBy=multi-user.target

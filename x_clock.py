@@ -6,12 +6,15 @@ import sys
 import os
 import datetime
 from dataclasses import dataclass, field
+from io import BytesIO
+from threading import Thread
 
 from PIL import Image, ImageDraw, ImageFont, ImageChops, ImageEnhance
 from pythonosc.osc_server import AsyncIOOSCUDPServer
 from pythonosc.dispatcher import Dispatcher
 from webcolors import name_to_rgb, hex_to_rgb, HTML4_NAMES_TO_HEX
 import asyncio
+from aiohttp import web
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__) + '/..'))
 from rgbmatrix import RGBMatrix, RGBMatrixOptions
@@ -324,6 +327,27 @@ class XClock(MatrixBase):
                 self.draw_glyph(str(random.randint(0, 9)), pos)
             self.numbers_glitch_step -= 1
 
+    def render(self):
+        self.image = Image.new('RGB', (self.matrix.width, self.matrix.height), color=self.background)
+        self.tick_tock()
+        if self.brightness == 0 == self.target_brightness:
+            raise Cleared
+        self.update_clock()
+
+        self.numbers_glitch()
+        self.x_glitch()
+        self.draw_x()
+        self.do_glitch()
+
+        self.step_fade()
+
+        if not self.show_numbers:
+            raise Cleared
+
+        if self.brightness != 100:
+            e = ImageEnhance.Brightness(self.image)
+            self.image = e.enhance(self.brightness / 100)
+
     async def async_run(self):
         """
         The main run loop
@@ -331,33 +355,12 @@ class XClock(MatrixBase):
         double_buffer = self.matrix.CreateFrameCanvas()
 
         while True:
-            self.image = Image.new('RGB', (self.matrix.width, self.matrix.height), color=self.background)
             try:
-                self.tick_tock()
-                if self.brightness == 0 == self.target_brightness:
-                    raise Cleared
-                self.update_clock()
-
-                self.numbers_glitch()
-                self.x_glitch()
-                self.draw_x()
-                self.do_glitch()
-
-                self.step_fade()
-
-                if not self.show_numbers:
-                    raise Cleared
-
-                if self.brightness != 100:
-                    e = ImageEnhance.Brightness(self.image)
-                    self.image = e.enhance(self.brightness / 100)
-
+                self.render()
                 double_buffer.SetImage(self.image, 0)
-
                 double_buffer = self.matrix.SwapOnVSync(double_buffer)
             except Cleared:
                 self.matrix.Clear()
-
             await asyncio.sleep(self.framerate)
 
 
@@ -370,9 +373,11 @@ class OSCServer(XClock):
         super(OSCServer, self).__init__(*args, **kwargs)
         self.parser.add_argument("--ip", help="IP for the OSC Server to listen on", default="0.0.0.0")
         self.parser.add_argument("--port", help="Port for the OSC Server to listen on", default=1337)
+        self.parser.add_argument("--http-port", help="Port for the HTTP preview server", type=int, default=8080)
 
         self.dispatcher = Dispatcher()
         self.dispatcher.set_default_handler(self.osc_recv)
+        self.latest_image = None
 
     def get_server(self):
         return AsyncIOOSCUDPServer((self.args.ip, self.args.port), self.dispatcher, asyncio.get_event_loop())
@@ -526,11 +531,88 @@ class OSCServer(XClock):
             self.time_dilation_factor = 1
         self.current_time = datetime.datetime.now()
 
+    def render(self):
+        try:
+            super().render()
+            self.latest_image = self.image.copy()
+        except Cleared:
+            self.latest_image = Image.new('RGB', (self.matrix.width, self.matrix.height), color=self.background)
+            raise
+
+    async def http_preview_handler(self, request):
+        """Serve the current display image as PNG"""
+        if self.latest_image is None:
+            return web.Response(status=404, text="No image available yet")
+
+        # Scale up the image for better visibility (64x32 is tiny!)
+        scale_factor = 8
+        scaled_image = self.latest_image.resize(
+            (self.latest_image.width * scale_factor, self.latest_image.height * scale_factor),
+            Image.NEAREST  # Use NEAREST to preserve pixel art look
+        )
+
+        # Convert to PNG bytes
+        buffer = BytesIO()
+        scaled_image.save(buffer, format='PNG')
+        buffer.seek(0)
+
+        return web.Response(body=buffer.read(), content_type='image/png')
+
+    async def http_stream_handler(self, request):
+        """Stream the display as MJPEG video"""
+        response = web.StreamResponse()
+        response.content_type = 'multipart/x-mixed-replace; boundary=frame'
+        await response.prepare(request)
+
+        scale_factor = 8
+        try:
+            while True:
+                if self.latest_image is not None:
+                    # Scale up the image
+                    scaled_image = self.latest_image.resize(
+                        (self.latest_image.width * scale_factor, self.latest_image.height * scale_factor),
+                        Image.NEAREST
+                    )
+
+                    # Convert to JPEG bytes
+                    buffer = BytesIO()
+                    scaled_image.save(buffer, format='JPEG', quality=95)
+                    frame_data = buffer.getvalue()
+
+                    # Send frame in multipart format
+                    await response.write(
+                        b'--frame\r\n'
+                        b'Content-Type: image/jpeg\r\n\r\n' + frame_data + b'\r\n'
+                    )
+
+                # Wait for next frame (match the clock's framerate)
+                await asyncio.sleep(self.framerate)
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        finally:
+            await response.write_eof()
+
+        return response
+
+    async def start_http_server(self):
+        """Start the HTTP server for image preview"""
+        app = web.Application()
+        app.router.add_get('/preview', self.http_preview_handler)
+        app.router.add_get('/stream', self.http_stream_handler)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', self.args.http_port)
+        await site.start()
+        logging.info(f'HTTP preview server started on port {self.args.http_port}')
+
 
 async def async_main(server):
     runserver = server.get_server()
     try:
-        transport, protocol = await runserver.create_serve_endpoint()
+        transport, _ = await runserver.create_serve_endpoint()
+        # Start HTTP server for preview
+        await server.start_http_server()
         await server.async_run()
     except KeyboardInterrupt:
         logging.info('Exiting')
