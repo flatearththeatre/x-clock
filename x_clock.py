@@ -15,6 +15,7 @@ from pythonosc.dispatcher import Dispatcher
 from webcolors import name_to_rgb, hex_to_rgb, HTML4_NAMES_TO_HEX
 import asyncio
 from aiohttp import web
+import aiohttp_cors
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__) + '/..'))
 from rgbmatrix import RGBMatrix, RGBMatrixOptions
@@ -39,7 +40,7 @@ def color_to_rgb(color):
 RANDOM_COLORS = [hex_to_rgb(x) for x in HTML4_NAMES_TO_HEX.values()]
 
 
-class MatrixBase(object):
+class MatrixBase:
     def __init__(self, *args, **kwargs):
         self.parser = argparse.ArgumentParser()
 
@@ -363,6 +364,45 @@ class XClock(MatrixBase):
                 self.matrix.Clear()
             await asyncio.sleep(self.framerate)
 
+    @property
+    def state(self):
+        """
+        Return comprehensive current state of the clock
+        """
+        def rgb_to_hex(rgb):
+            """Convert RGB tuple to hex string without #"""
+            return '{:02x}{:02x}{:02x}'.format(rgb[0], rgb[1], rgb[2])
+
+        current_time_obj = self.freeze_time or self.current_time
+
+        return {
+            'time': {
+                'hour': current_time_obj.hour,
+                'minute': current_time_obj.minute,
+                'frozen': self.freeze_time is not None,
+            },
+            'appearance': {
+                'brightness': int(self.brightness),
+                'text_color': rgb_to_hex(self.text_color),
+                'x_color': rgb_to_hex(self.x_color),
+                'background': rgb_to_hex(self.background),
+            },
+            'effects': {
+                'time_dilation': self.time_dilation_factor,
+                'blink_dots': self.blink_dots,
+                'blink_all': self.blink_all,
+            },
+            'glitches': {
+                'visual_glitch_freq': self.glitch_freq,
+                'visual_glitch_active': self.glitch_mode != self.GLITCH_MODE_OFF,
+                'x_glitch_freq': self.x_glitch_freq,
+                'x_glitch_active': self.x_glitch_mode == self.GLITCH_MODE_RANDOM,
+                'x_glitch_number': self.x_glitch_number,
+                'x_glitch_frames': self.x_glitch_frames,
+            },
+            'x_positions': self.x_positions,
+        }
+
 
 class OSCServer(XClock):
     """
@@ -370,35 +410,15 @@ class OSCServer(XClock):
     """
 
     def __init__(self, *args, **kwargs):
-        super(OSCServer, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.parser.add_argument("--ip", help="IP for the OSC Server to listen on", default="0.0.0.0")
         self.parser.add_argument("--port", help="Port for the OSC Server to listen on", default=1337)
-        self.parser.add_argument("--http-port", help="Port for the HTTP preview server", type=int, default=8080)
 
         self.dispatcher = Dispatcher()
         self.dispatcher.set_default_handler(self.osc_recv)
-        self.latest_image = None
 
     def get_server(self):
         return AsyncIOOSCUDPServer((self.args.ip, self.args.port), self.dispatcher, asyncio.get_event_loop())
-
-    @property
-    def state(self):
-        """
-        Vestige. Had an idea to save state in the event of a crash... Gave up on that.
-        """
-        return {
-            'real_time'      : time.time(),
-            'current_time'   : self.current_time.isoformat(),
-            'glitch_mode'    : self.glitch_mode,
-            'glitch_freq'    : self.glitch_freq,
-            'x_glitch_mode'  : self.x_glitch_mode,
-            'x_glitch_freq'  : self.x_glitch_freq,
-            'x_glitch_number': self.x_glitch_number,
-            'x_glitch_frames': self.x_glitch_frames,
-            'x_color'        : self.x_color,
-            'text_color'     : self.text_color,
-        }
 
     def osc_recv(self, cmd, *args):
         """
@@ -531,7 +551,18 @@ class OSCServer(XClock):
             self.time_dilation_factor = 1
         self.current_time = datetime.datetime.now()
 
+
+
+class HTTPServer(OSCServer):
+    """ Extends OSCServer to add HTTP functionality """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.parser.add_argument("--http-port", help="Port for the HTTP preview server", type=int, default=8080)
+        self.latest_image = None
+
     def render(self):
+        """ Render the clock and store the latest image for HTTP serving """
         try:
             super().render()
             self.latest_image = self.image.copy()
@@ -594,25 +625,56 @@ class OSCServer(XClock):
 
         return response
 
-    async def start_http_server(self):
-        """Start the HTTP server for image preview"""
+    async def http_status_handler(self, request):
+        """Return current clock status as JSON"""
+        import json
+        return web.Response(
+            body=json.dumps(self.state),
+            content_type='application/json'
+        )
+
+    async def async_run(self):
+        """Start the HTTP server"""
         app = web.Application()
-        app.router.add_get('/preview', self.http_preview_handler)
-        app.router.add_get('/stream', self.http_stream_handler)
+
+        # Configure CORS to allow browser access
+        cors = aiohttp_cors.setup(app, defaults={
+            "*": aiohttp_cors.ResourceOptions(
+                allow_credentials=True,
+                expose_headers="*",
+                allow_headers="*",
+                allow_methods="*"
+            )
+        })
+
+        # Add routes
+        preview_route = app.router.add_get('/preview', self.http_preview_handler)
+        stream_route = app.router.add_get('/stream', self.http_stream_handler)
+        status_route = app.router.add_get('/status', self.http_status_handler)
+
+        # Configure CORS for each route
+        cors.add(preview_route)
+        cors.add(stream_route)
+        cors.add(status_route)
 
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', self.args.http_port)
+        site = web.TCPSite(runner, host="0.0.0.0", port=self.args.http_port)
         await site.start()
-        logging.info(f'HTTP preview server started on port {self.args.http_port}')
+
+        logging.info(f'HTTP server started on port {self.args.http_port}')
+
+        try:
+            await super().async_run()
+        finally:
+            await runner.cleanup()
+            logging.info('HTTP server stopped')
 
 
 async def async_main(server):
     runserver = server.get_server()
     try:
         transport, _ = await runserver.create_serve_endpoint()
-        # Start HTTP server for preview
-        await server.start_http_server()
         await server.async_run()
     except KeyboardInterrupt:
         logging.info('Exiting')
@@ -623,7 +685,7 @@ async def async_main(server):
 
 
 def main():
-    server = OSCServer()
+    server = HTTPServer()
 
     logging.basicConfig(level=logging.INFO)
 

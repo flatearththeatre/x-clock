@@ -337,7 +337,7 @@ HTML_TEMPLATE = """
 
     <script>
         let previewActive = false;
-        const streamUrl = '{{ stream_url }}';
+        const streamUrl = '{{ clock_url }}/stream';
 
         function togglePreview() {
             const btn = document.getElementById('togglePreviewBtn');
@@ -396,6 +396,57 @@ HTML_TEMPLATE = """
             }
             // If it's a named color, we can't easily convert it for the picker
             // so just leave the picker as-is
+        }
+
+        // Load status and populate UI on page load
+        window.addEventListener('load', () => {
+            loadStatus();
+        });
+
+        function loadStatus() {
+            fetch('{{ clock_url }}/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.warn('Could not load status:', data.error);
+                        return;
+                    }
+
+                    // Populate time
+                    if (data.time) {
+                        document.getElementById('hour').value = data.time.hour;
+                        document.getElementById('minute').value = data.time.minute;
+                    }
+
+                    // Populate appearance
+                    if (data.appearance) {
+                        document.getElementById('brightness').value = data.appearance.brightness;
+                        document.getElementById('color').value = data.appearance.text_color;
+                        updateColorPicker('color', 'colorPicker');
+                        document.getElementById('xcolor').value = data.appearance.x_color;
+                        updateColorPicker('xcolor', 'xcolorPicker');
+                        document.getElementById('bg').value = data.appearance.background;
+                        updateColorPicker('bg', 'bgPicker');
+                    }
+
+                    // Populate effects
+                    if (data.effects) {
+                        document.getElementById('dilation').value = data.effects.time_dilation;
+                    }
+
+                    // Populate glitches
+                    if (data.glitches) {
+                        document.getElementById('glitchfreq').value = data.glitches.visual_glitch_freq;
+                        document.getElementById('xglitchfreq').value = data.glitches.x_glitch_freq;
+                        document.getElementById('xglitchnum').value = data.glitches.x_glitch_number;
+                        document.getElementById('xglitchframes').value = data.glitches.x_glitch_frames;
+                    }
+
+                    console.log('Status loaded successfully');
+                })
+                .catch(error => {
+                    console.warn('Could not load status:', error);
+                });
         }
 
         function showStatus(message, isError = false) {
@@ -558,7 +609,7 @@ def index():
     return render_template_string(
         HTML_TEMPLATE,
         osc_display=osc_config['display'],
-        stream_url=osc_config['stream_url']
+        clock_url=osc_config['clock_url']
     )
 
 
@@ -598,15 +649,15 @@ def main():
         local_ip = get_local_ip()
         osc_config['display'] = f"{local_ip}:{args.osc_port}"
         # For localhost, use the actual IP so browser can connect
-        osc_config['stream_url'] = f"http://{local_ip}:{args.http_port}/stream"
+        osc_config['clock_url'] = f"http://{local_ip}:{args.http_port}"
     else:
         osc_config['display'] = f"{args.osc_host}:{args.osc_port}"
-        osc_config['stream_url'] = f"http://{args.osc_host}:{args.http_port}/stream"
+        osc_config['clock_url'] = f"http://{args.osc_host}:{args.http_port}"
 
     print(f"X Clock Web Controller")
     print(f"Web UI: http://{args.host}:{args.port}")
     print(f"OSC Target: {osc_config['display']}")
-    print(f"Stream URL: {osc_config['stream_url']}")
+    print(f"Clock URL: {osc_config['clock_url']}")
 
     app.run(host=args.host, port=args.port)
 
