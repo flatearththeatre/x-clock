@@ -12,6 +12,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
     python3-dev \
     python3-venv \
+    python3-pillow \
     cython3
 
 # Set up Python virtual environment
