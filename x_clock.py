@@ -4,6 +4,7 @@ import datetime
 import logging
 import os
 import random
+import socket
 import sys
 import time
 from dataclasses import dataclass, field
@@ -16,6 +17,13 @@ from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import AsyncIOOSCUDPServer
 from rgbmatrix import RGBMatrix, RGBMatrixOptions
 from webcolors import HTML4_NAMES_TO_HEX, hex_to_rgb, name_to_rgb
+
+try:
+    import RPi.GPIO as GPIO
+
+    GPIO_AVAILABLE = True
+except ImportError:
+    GPIO_AVAILABLE = False
 
 
 def color_to_rgb(color):
@@ -178,6 +186,7 @@ class MatrixBase:
         options.pwm_lsb_nanoseconds = self.args.led_pwm_lsb_nanoseconds
         options.led_rgb_sequence = self.args.led_rgb_sequence
         options.pixel_mapper_config = self.args.led_pixel_mapper
+        options.drop_privileges = False
         if self.args.led_show_refresh:
             options.show_refresh_rate = 1
 
@@ -198,7 +207,8 @@ class Cleared(Exception):
 @dataclass
 class XClock(MatrixBase):
     image: Image = None  # Current PIL Image object representing the clock display
-    font: ImageFont = None # Font for PIL
+    font: ImageFont = None  # Font for PIL
+    gpio_enabled: bool = False  # Is GPIO monitoring enabled
     glyphs: dict = field(
         default_factory=dict
     )  # Dictionary mapping characters to glyphs
@@ -220,7 +230,7 @@ class XClock(MatrixBase):
         default_factory=list
     )  # Positions which should be replaced with X
     text_color: tuple = color_to_rgb("#29B6F6")  # Color of numbers / dots
-    x_color: tuple = color_to_rgb("#29B6F6")  # Color of Xs
+    x_color: tuple = color_to_rgb("#C70000")  # Color of Xs
     background: tuple = (0, 0, 0)  # Background color
     framerate: float = 0.05  # Delay between frames
     fade_time: int = 10  # Time for fade to execute
@@ -237,6 +247,8 @@ class XClock(MatrixBase):
     fade_snap_time: datetime = None  # New time after fadesnap op
     fade_snap_clear_x: bool = False  # Clear X characters following a fadesnap
     freeze_time: datetime = None  # Freeze the clock on a given time
+    scrolling_text: str = ""  # Current scrolling text
+    text_scroll_offset: int = 0  # Current scroll position for text
     # Constants
     NUMBER_POSITIONS = [2, 15, 36, 49]  # Pixel left positions for each glyph
     GLITCH_MODE_OFF = 0  # No glitching
@@ -248,6 +260,20 @@ class XClock(MatrixBase):
         super(XClock, self).__init__()
         self.parser.add_argument(
             "--font", help="Path to a .pil font file", required=True
+        )
+        self.parser.add_argument(
+            "--show-ip",
+            action="store_true",
+            help="Show IP address on startup",
+        )
+        self.parser.add_argument(
+            "--gpio-pin",
+            help="GPIO pin for show IP switch (default: 25)",
+            type=int,
+            default=25,
+        )
+        self.parser.add_argument(
+            "--no-gpio", help="Disable GPIO switch monitoring", action="store_true"
         )
 
     def tick_tock(self):
@@ -273,16 +299,53 @@ class XClock(MatrixBase):
         if self.blink_all:
             self.show_numbers = self.blink_state
 
+    @property
+    def ip_address(self) -> str:
+        """Get the local IP address"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "NO IP"
+
+    def draw_scrolling_text(self):
+        """Draw scrolling text across the display"""
+        d = ImageDraw.Draw(self.image)
+
+        # Get text width using textbbox
+        bbox = d.textbbox((0, 0), self.scrolling_text, font=self.font)
+        text_width = bbox[2] - bbox[0]
+
+        # Draw text at current scroll offset, raised by 5 pixels
+        x_pos = self.matrix.width - self.text_scroll_offset
+        y_pos = -5  # Raise text by 5 pixels to fit on screen
+        d.text(
+            (x_pos, y_pos), self.scrolling_text, font=self.font, fill=self.text_color
+        )
+
+        # Update scroll offset
+        self.text_scroll_offset += 1
+
+        # Reset when text has scrolled off screen
+        if self.text_scroll_offset > text_width + self.matrix.width:
+            self.text_scroll_offset = 0
+
     def update_clock(self):
         """
-        Draws the clock
+        Draws the clock or IP address
         """
-        time_obj = self.freeze_time or self.current_time
-        time_disp = time_obj.strftime("%H%M")
-        if self.show_dots:
-            self.draw_glyph(":", left=29)
-        for pos, glyph in enumerate(time_disp):
-            self.draw_glyph(glyph, pos)
+        if self.scrolling_text:
+            self.draw_scrolling_text()
+        else:
+            time_obj = self.freeze_time or self.current_time
+            time_disp = time_obj.strftime("%H%M")
+            if self.show_dots:
+                self.draw_glyph(":", left=29)
+            for pos, glyph in enumerate(time_disp):
+                self.draw_glyph(glyph, pos)
 
     def draw_x(self):
         """
@@ -382,6 +445,22 @@ class XClock(MatrixBase):
             bitmap = image._new(self.font.getmask(str(i)))
             self.glyphs[str(i)] = bitmap.crop((0, 5, 13, 37))
 
+    def gpio_state(self) -> bool:
+        """
+        Returns true if the GPIO pin is active (pulled low)
+        """
+        state = False
+        if GPIO_AVAILABLE and not self.args.no_gpio:
+            try:
+                GPIO.setmode(GPIO.BCM)
+                GPIO.setup(self.args.gpio_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+                pin_state = GPIO.input(self.args.gpio_pin)
+                state = pin_state == GPIO.LOW
+                logging.info(f"GPIO pin {self.args.gpio_pin} is low")
+            except Exception as e:
+                logging.warning(f"Failed to initialize GPIO: {e}")
+        return state
+
     def process(self):
         """
         Some startup stuff
@@ -389,6 +468,10 @@ class XClock(MatrixBase):
         if not super().process():
             return False
         self.generate_glyphs()
+
+        if self.args.show_ip or self.gpio_state():
+            self.scrolling_text = self.ip_address
+
         return True
 
     def step_fade(self):
@@ -533,6 +616,8 @@ class OSCServer(XClock):
             getattr(self, f"set_{cmd}")(*args)
         except AttributeError:
             logging.error(f"Invalid command received {cmd}")
+        except Exception as e:
+            logging.error(f"Error processing command {cmd}: {e!r}")
 
     def set_random_glitch(self, freq=100, intensity=4):
         self.glitch_intensity = intensity
@@ -649,6 +734,16 @@ class OSCServer(XClock):
         if reset_dilation:
             self.time_dilation_factor = 1
         self.current_time = datetime.datetime.now()
+
+    def set_display_text(self, text: str = ""):
+        """Display arbitrary text by scrolling it across the display"""
+        if text != self.scrolling_text:
+            self.text_scroll_offset = 0
+        self.scrolling_text = text
+
+    def set_showip(self, enabled=1):
+        """Toggle IP address display mode"""
+        self.set_display_text("" if enabled == 0 else self.ip_address)
 
 
 class HTTPServer(OSCServer):

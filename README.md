@@ -10,7 +10,7 @@ I recommend starting from a fresh Raspberry Pi OS Lite install; You want the lit
 
 Use git to clone this repo and run `sudo ./install.sh` in this root. The clock will be installed to `/usr/local/xclock`. SystemD units will be created to ensure that the clock starts on boot.
 
-### Price Breakddown & Links
+### Price Breakdown (2019 prices) & Links
 * Raspberry Pi 3B - $35 https://www.adafruit.com/product/3055
 * Panel - $18 https://www.aliexpress.com/item/32754106669.html?spm=a2g0s.9042311.0.0.5f944c4dNgMBuw
 * Bonnet - $15 https://www.adafruit.com/product/3211
@@ -28,12 +28,15 @@ Starts up with current time at 100 brightness. By default the clock will advance
 
 Default OSC port: 1337
 
+### Show IP Address
+Since this will generally be run headlessly (without a keyboard and monitor), it can be inconvenient to discover the clock's IP address. By shorting GPIO Pin 25 to ground at startup you can trigger the clock to display its current IP. The IP address will be scrolled across the screen. This can be stopped by issuing the `/showip 0` OSC command. I do not recommend running with Pin 25 grounded during normal operation as it would be awkward if the clock were to reboot during a show and start displaying its IP address, but it can be useful when first setting up.
+
 ### Web controller
 This is also bundled with a web interface to control the clock. All of the below OSC commands are implemented in the UI, as well as a preview which can be toggled (note: the preview adds CPU load to the Raspberry Pi and may result in increased flickering when enabled).
 
 The UI features a command log which shows the OSC command issued. This can be helpful in programming show controllers such as QLab which support [OSC Cues](https://qlab.app/docs/v5/networking/network-cues/).
 
-The web interface is exposed on port 80, so it should be accessible in the browser on the same network as the Pi by visiting `http://{IP-Of-Clock}}` (If your network supports mDNS, you may be able to access it at `http://{HOSTNAME}.local`; e.g. http://xclock.local).
+The web interface is exposed on port 80, so it should be accessible in the browser on the same network as the Pi by visiting `http://{IP-Of-Clock}}` (See above for help determining the IP address). If your network supports mDNS, you may be able to access it at `http://{HOSTNAME}.local`; e.g. http://xclock.local.
 
 ### OSC Commands Reference
 
@@ -58,5 +61,7 @@ Arguments in `[brackets]` are optional; default indicated with `=`.
 * `/blink_all [enabled=1]` - Enables or disables blinking all characters once per second. `0` to disable blinking
 * `/freeze [enabled=1]` - Freeze the clock on the currently displayed time.
 * `/timenow` - Set the clock to the current IRL time.
+* `/showip [enabled=0]` - Enables or disables showing the local IP instead of the normal display. Set enabled `1` to show the IP address, `0` to show the normal display.
+* `/display_text [text=""]` - Scroll an arbitrary message across the display instead of the time. Text should be quoted if it includes spaces. Send with no arguments to show the normal time display.
 
 Commands which adjust time (`time_dilation`, `increment_time`, `time`, and `normal`) reset the (unseen) seconds to 0 to avoid weirdness.

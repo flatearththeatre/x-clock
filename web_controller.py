@@ -337,6 +337,27 @@ HTML_TEMPLATE = """
         <button onclick="sendCommand('/normal')" style="background: #f44336;">Reset to Normal</button>
     </div>
 
+    <div class="section">
+        <h2>Configuration</h2>
+        <div>
+            <label>Display Custom Text:</label>
+            <input type="text" id="displayText" placeholder="Enter text to scroll">
+            <button onclick="sendCommand('/display_text', [document.getElementById('displayText').value])">Display</button>
+            <button onclick="sendCommand('/display_text', [])">Disable</button>
+            <div style="margin-top: 5px; font-size: 0.9em; color: #666;">
+                (Scrolls custom text across display. Disable returns to normal time display)
+            </div>
+        </div>
+        <div>
+            <label>Show IP Address:</label>
+            <button onclick="sendCommand('/showip', [1])">Enable</button>
+            <button onclick="sendCommand('/showip', [0])">Disable</button>
+            <div style="margin-top: 5px; font-size: 0.9em; color: #666;">
+                (Scrolls IP address across display instead of time)
+            </div>
+        </div>
+    </div>
+
     <script>
         let previewActive = false;
         const streamUrl = '{{ clock_url }}/stream';
