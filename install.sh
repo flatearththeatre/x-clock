@@ -10,7 +10,6 @@ FONT=VCROSDMono-42
 # Install dependencies
 apt-get update
 apt-get install -y --no-install-recommends \
-    git \
     python3-dev \
     python3-venv \
     cython3
