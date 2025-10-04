@@ -198,7 +198,7 @@ class Cleared(Exception):
 @dataclass
 class XClock(MatrixBase):
     image: Image = None  # Current PIL Image object representing the clock display
-    font: ImageFont = None  # Font for PIL
+    font: ImageFont = None # Font for PIL
     glyphs: dict = field(
         default_factory=dict
     )  # Dictionary mapping characters to glyphs
@@ -222,7 +222,6 @@ class XClock(MatrixBase):
     text_color: tuple = color_to_rgb("#29B6F6")  # Color of numbers / dots
     x_color: tuple = color_to_rgb("#29B6F6")  # Color of Xs
     background: tuple = (0, 0, 0)  # Background color
-    font: ImageFont = field(init=False)  # Font for PIL
     framerate: float = 0.05  # Delay between frames
     fade_time: int = 10  # Time for fade to execute
     fade_elapsed: int = 0  # Current time of fade
@@ -375,6 +374,8 @@ class XClock(MatrixBase):
         """
         Convert the font to bitmaps for numeral, ":", and "X" character
         """
+        if not self.font:
+            self.font = ImageFont.load(self.args.font)
         image = Image.new("RGB", (13, 32))
         glyphs = list(range(10)) + [":", "X"]
         for i in glyphs:
@@ -385,8 +386,10 @@ class XClock(MatrixBase):
         """
         Some startup stuff
         """
+        if not super().process():
+            return False
         self.generate_glyphs()
-        return super(XClock, self).process()
+        return True
 
     def step_fade(self):
         """
@@ -446,9 +449,6 @@ class XClock(MatrixBase):
         """
         The main run loop
         """
-        if self.font is None:
-            self.font = ImageFont.load(self.args.font)
-
         double_buffer = self.matrix.CreateFrameCanvas()
 
         while True:

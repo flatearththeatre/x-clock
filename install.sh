@@ -13,20 +13,21 @@ apt-get install -y --no-install-recommends \
     python3-dev \
     python3-venv \
     python3-pillow \
+    python3-setuptools \
     cython3
 
 # Set up Python virtual environment
 mkdir -p $PREFIX
-python3 -m venv $PREFIX/venv
+python3 -m venv --system-site-packages $PREFIX/venv
 source $PREFIX/venv/bin/activate
 
 # Install Python dependencies
-pip3 install --no-cache-dir -r requirements.txt
+pip3 install -r requirements.txt
 
 # Install rpi-rgb-led-matrix library
 mkdir -p $PREFIX/matrix
 curl -sSfL https://github.com/hzeller/rpi-rgb-led-matrix/archive/${MATRIX_LIB_VERSION}.tar.gz | \
-    tar xz --strip 1 -C $PREFIX
+    tar xz --strip 1 -C $PREFIX/matrix
 pushd $PREFIX/matrix
 make install-python PYTHON=$(which python3) HARDWARE_DESC=$HARDWARE_DESC
 popd

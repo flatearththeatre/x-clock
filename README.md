@@ -6,6 +6,8 @@ This is the source code to a digital clock which was part of the set on Flat Ear
 For our production, this was run on a Raspberry Pi 3B. The display was a 64x32 RGB LED panel with P4 spacing picked up from AliExpress, driven by a RGB bonnet from Adafruit. All powered by a 5V power supply. I 3D printed a bracket for attaching the electronics to the panel.
 
 ## Installation
+I recommend starting from a fresh Raspberry Pi OS Lite install; You want the lite version to avoid installing unnecessary packages such as a desktop environment. I created an SD card using the [Raspberry Pi Imager](https://www.raspberrypi.com/software/). I recommend using the advanced settings to set the hostname (to something like `xclock`), creating the user and password, enabling SSH, and optionally configuring wifi (although I suggest using wired ethernet in production).
+
 Use git to clone this repo and run `sudo ./install.sh` in this root. The clock will be installed to `/usr/local/xclock`. SystemD units will be created to ensure that the clock starts on boot.
 
 ### Price Breakddown & Links
@@ -31,7 +33,7 @@ This is also bundled with a web interface to control the clock. All of the below
 
 The UI features a command log which shows the OSC command issued. This can be helpful in programming show controllers such as QLab which support [OSC Cues](https://qlab.app/docs/v5/networking/network-cues/).
 
-The web interface is exposed on port 80, so it should be accessible in the browser on the same network as the Pi by visiting `http://{IP-Of-Clock}}` (If your network supports mDNS, you may be able to access it at http://xclock.local).
+The web interface is exposed on port 80, so it should be accessible in the browser on the same network as the Pi by visiting `http://{IP-Of-Clock}}` (If your network supports mDNS, you may be able to access it at `http://{HOSTNAME}.local`; e.g. http://xclock.local).
 
 ### OSC Commands Reference
 

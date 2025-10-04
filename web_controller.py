@@ -5,7 +5,8 @@ Provides a simple UI to send OSC commands to the clock
 """
 import argparse
 import socket
-from flask import Flask, render_template_string, request, jsonify
+
+from flask import Flask, jsonify, render_template_string, request
 from pythonosc import udp_client
 
 app = Flask(__name__)
@@ -24,6 +25,7 @@ def get_local_ip():
         return local_ip
     except Exception:
         return "127.0.0.1"
+
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -604,40 +606,58 @@ HTML_TEMPLATE = """
 """
 
 
-@app.route('/')
+@app.route("/")
 def index():
     return render_template_string(
         HTML_TEMPLATE,
-        osc_display=osc_config['display'],
-        clock_url=osc_config['clock_url']
+        osc_display=osc_config["display"],
+        clock_url=osc_config["clock_url"],
     )
 
 
-@app.route('/osc', methods=['POST'])
+@app.route("/osc", methods=["POST"])
 def osc():
     try:
         data = request.json
-        command = data.get('command')
-        args = data.get('args', [])
+        command = data.get("command")
+        args = data.get("args", [])
 
         if not command:
-            return jsonify({'status': 'error', 'message': 'No command specified'}), 400
+            return jsonify({"status": "error", "message": "No command specified"}), 400
 
         # Send OSC message
         osc_client.send_message(command, args)
 
-        return jsonify({'status': 'ok', 'command': command, 'args': args})
+        return jsonify({"status": "ok", "command": command, "args": args})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Web controller for X Clock')
-    parser.add_argument('--host', default='127.0.0.1', help='Host to bind web server to (default: 127.0.0.1)')
-    parser.add_argument('--port', type=int, default=5000, help='Port to bind web server to (default: 5000)')
-    parser.add_argument('--osc-host', default='127.0.0.1', help='OSC server host (default: 127.0.0.1)')
-    parser.add_argument('--osc-port', type=int, default=1337, help='OSC server port (default: 1337)')
-    parser.add_argument('--http-port', type=int, default=8080, help='HTTP preview port on clock server (default: 8080)')
+    parser = argparse.ArgumentParser(description="Web controller for X Clock")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind web server to (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=5000,
+        help="Port to bind web server to (default: 5000)",
+    )
+    parser.add_argument(
+        "--osc-host", default="127.0.0.1", help="OSC server host (default: 127.0.0.1)"
+    )
+    parser.add_argument(
+        "--osc-port", type=int, default=1337, help="OSC server port (default: 1337)"
+    )
+    parser.add_argument(
+        "--http-port",
+        type=int,
+        default=8080,
+        help="HTTP preview port on clock server (default: 8080)",
+    )
 
     args = parser.parse_args()
 
@@ -645,14 +665,14 @@ def main():
     osc_client = udp_client.SimpleUDPClient(args.osc_host, args.osc_port)
 
     # Determine OSC display string and stream URL
-    if args.osc_host in ('127.0.0.1', 'localhost'):
+    if args.osc_host in ("127.0.0.1", "localhost"):
         local_ip = get_local_ip()
-        osc_config['display'] = f"{local_ip}:{args.osc_port}"
+        osc_config["display"] = f"{local_ip}:{args.osc_port}"
         # For localhost, use the actual IP so browser can connect
-        osc_config['clock_url'] = f"http://{local_ip}:{args.http_port}"
+        osc_config["clock_url"] = f"http://{local_ip}:{args.http_port}"
     else:
-        osc_config['display'] = f"{args.osc_host}:{args.osc_port}"
-        osc_config['clock_url'] = f"http://{args.osc_host}:{args.http_port}"
+        osc_config["display"] = f"{args.osc_host}:{args.osc_port}"
+        osc_config["clock_url"] = f"http://{args.osc_host}:{args.http_port}"
 
     print(f"X Clock Web Controller")
     print(f"Web UI: http://{args.host}:{args.port}")
@@ -662,5 +682,5 @@ def main():
     app.run(host=args.host, port=args.port)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
